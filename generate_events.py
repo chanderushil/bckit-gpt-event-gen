@@ -12,8 +12,9 @@ SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
 prompt = """
 Give me 5 upcoming cultural events happening worldwide between today and July 2026.
-For each event, return a JSON object with the fields:
-name, location, start_date, end_date, image_url, category, and description.
+Return ONLY a valid JSON array. Each object should contain:
+name, location, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD), image_url, category, and description.
+NO explanations, NO numbered lists — just the raw JSON array.
 """
 
 # Call OpenAI using new SDK syntax
