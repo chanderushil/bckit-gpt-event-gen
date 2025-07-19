@@ -1,30 +1,48 @@
 import os
+import openai
 import requests
 import uuid
 import json
-from openai import OpenAI
+from dateutil.parser import parse as parse_date
+from datetime import datetime, timezone
 
-# Initialize OpenAI client (new SDK format)
-client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
-
+openai.api_key = os.environ["OPENAI_API_KEY"]
 SUPABASE_URL = os.environ["SUPABASE_URL"]
 SUPABASE_SERVICE_KEY = os.environ["SUPABASE_SERVICE_KEY"]
 
-prompt = """
-Give me 5 upcoming cultural events happening worldwide between today and July 2026.
-Return ONLY a valid JSON array. Each object should contain:
-name, location, start_date (YYYY-MM-DD), end_date (YYYY-MM-DD), image_url, category, and description.
-NO explanations, NO numbered lists — just the raw JSON array.
-"""
+# Step 1: Delete expired events
+today = datetime.now(timezone.utc).date().isoformat()
+delete_url = f"{SUPABASE_URL}/rest/v1/events?end_date=lt.{today}"
+delete_headers = {
+    "apikey": SUPABASE_SERVICE_KEY,
+    "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
+}
+delete_res = requests.delete(delete_url, headers=delete_headers)
+print(f"🧹 Deleted past events → Status: {delete_res.status_code}")
 
-# Call OpenAI using new SDK syntax
-response = client.chat.completions.create(
-    model="gpt-3.5-turbo",
+# Step 2: Generate 10–15 new events
+prompt = """Give me 12 upcoming global cultural, iconic, or seasonal events happening between now and July 2026.
+Respond ONLY with a raw JSON array, without markdown or formatting.
+Each event must have:
+- name (string)
+- location (string, format: City, Country)
+- start_date (ISO8601)
+- end_date (ISO8601)
+- image_url (string)
+- category (one of: Culture, Seasonal, Music, Arts, Iconic, Nature, Sports)
+- description (1–2 sentence summary of the event)"""
+
+response = openai.ChatCompletion.create(
+    model="gpt-4",
     messages=[{"role": "user", "content": prompt}],
     temperature=0.7
 )
 
-content = response.choices[0].message.content
+content = response.choices[0].message["content"].strip()
+if content.startswith("```json"):
+    content = content.removeprefix("```json").removesuffix("```").strip()
+elif content.startswith("```"):
+    content = content.removeprefix("```").removesuffix("```").strip()
 
 try:
     events = json.loads(content)
@@ -33,6 +51,7 @@ except Exception as e:
     print("Raw content was:", content)
     exit(1)
 
+# Step 3: Validate & de-duplicate
 headers = {
     "apikey": SUPABASE_SERVICE_KEY,
     "Authorization": f"Bearer {SUPABASE_SERVICE_KEY}",
@@ -40,21 +59,37 @@ headers = {
     "Prefer": "resolution=merge-duplicates"
 }
 
+def is_valid_date(date_str):
+    try:
+        parse_date(date_str)
+        return True
+    except:
+        return False
+
+required_fields = {"name", "location", "start_date", "end_date", "image_url", "category", "description"}
 inserted = 0
 for event in events:
-    # Check for existing event by name + start_date
+    if not required_fields.issubset(event.keys()):
+        print("⚠️ Skipping incomplete event:", event)
+        continue
+    if not is_valid_date(event["start_date"]) or not is_valid_date(event["end_date"]):
+        print("⚠️ Invalid date format, skipping:", event)
+        continue
+
+    # Check for duplicate
     query = f"{SUPABASE_URL}/rest/v1/events?select=id&name=eq.{event['name']}&start_date=eq.{event['start_date']}"
     check = requests.get(query, headers=headers)
     if check.status_code == 200 and check.json():
-        print(f"⚠️ Skipping duplicate: {event['name']} ({event['start_date']})")
+        print(f"⏩ Skipping duplicate: {event['name']}")
         continue
 
+    # Assign UUID and insert
     event['id'] = str(uuid.uuid4())
     res = requests.post(f"{SUPABASE_URL}/rest/v1/events", headers=headers, json=event)
     if res.status_code in [200, 201]:
         inserted += 1
         print(f"✅ Inserted: {event['name']}")
     else:
-        print(f"❌ Failed to insert: {event['name']} —", res.text)
+        print(f"❌ Failed to insert: {event['name']} →", res.status_code, res.text)
 
-print(f"🏁 Done. Inserted {inserted} new events.")
+print(f"🎉 Weekly update done. {inserted} new events inserted.")
