@@ -1,13 +1,11 @@
-import os
-#import openai
+from openai import OpenAI
 import requests
 import uuid
 import json
 from dateutil.parser import parse as parse_date
 from datetime import datetime, timezone
+import os
 
-#openai.api_key = os.environ["OPENAI_API_KEY"]
-from openai import OpenAI
 client = OpenAI()
 
 SUPABASE_URL = os.environ["SUPABASE_URL"]
@@ -35,12 +33,13 @@ Each event must have:
 - category (one of: Culture, Seasonal, Music, Arts, Iconic, Nature, Sports)
 - description (1–2 sentence summary of the event)"""
 
-response = openai.ChatCompletion.create(
+response = client.chat.completions.create(
     model="gpt-4",
     messages=[{"role": "user", "content": prompt}],
     temperature=0.7
 )
-content = response.choices[0].message["content"].strip()
+
+content = response.choices[0].message.content.strip()
 if content.startswith("```json"):
     content = content.removeprefix("```json").removesuffix("```").strip()
 elif content.startswith("```"):
